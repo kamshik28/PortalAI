@@ -1,0 +1,24 @@
+version: "3.8"
+
+services:
+  flowise:
+    image: flowiseai/flowise:latest
+    container_name: flowise
+    ports:
+      - "3000:3000"
+    environment:
+      - PORT=3000
+      - FLOWISE_USERNAME=admin
+      - FLOWISE_PASSWORD=admin123
+  # Може    ш одразу прокинути ключ до LLM (або додаси в UI Flowise):
+      # - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - FLOWISE_FILE_STORAGE_PATH=/root/.flowise
+    volumes:
+      - flowise_data:/root/.flowise
+    restart: unless-stopped
+    # Якщо хочеш тягнути змінні з окремого файлу — раскоментуй:
+    # env_file:
+    #   - .env.flowise
+
+volumes:
+  flowise_data:

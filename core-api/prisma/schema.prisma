@@ -1,0 +1,43 @@
+enum Role {
+  STUDENT
+  TEACHER
+}
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  username  String?  @unique
+  aisId     String?  @unique
+  name      String?
+  role      Role     @default(STUDENT)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  teacherCourses     Course[]           @relation("TeacherCourses")
+  studentEnrollments CourseEnrollment[] @relation("StudentCourses")
+}
+
+model Course {
+  id          String             @id @default(cuid())
+  name        String
+  code        String?            @unique
+  description String?
+  teacher     User               @relation("TeacherCourses", fields: [teacherId], references: [id])
+  teacherId   String
+  enrollments CourseEnrollment[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model CourseEnrollment {
+  id        String @id @default(cuid())
+  course    Course @relation(fields: [courseId], references: [id])
+  courseId  String
+  student   User   @relation("StudentCourses", fields: [studentId], references: [id])
+  studentId String
+
+  createdAt DateTime @default(now())
+
+  @@unique([courseId, studentId])
+}
