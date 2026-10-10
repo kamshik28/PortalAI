@@ -1,11 +1,9 @@
 // src/app/auth/login/page.tsx
-
 "use client";
 
 import { FormEvent, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Card } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
+import Link from "next/link";
 
 export default function LoginPage() {
     const router = useRouter();
@@ -35,66 +33,91 @@ export default function LoginPage() {
             const data = await res.json().catch(() => null);
 
             if (!res.ok) {
-                setError(data?.message || "Login failed");
+                setError(data?.message || "Prihlásenie zlyhalo");
             } else {
-                // кука ставиться в /api/auth/login
                 router.push("/");
+                router.refresh();
             }
-        } catch (err) {
-            console.error(err);
-            setError("Network error");
+        } catch {
+            setError("Chyba siete — skús to znova");
         } finally {
             setIsLoading(false);
         }
     }
 
     return (
-        <div className="min-h-screen flex items-center justify-center px-4">
-            <Card className="w-full max-w-md p-6 space-y-4">
-                <h1 className="text-2xl font-semibold text-center">
-                    Prihlasenie
-                </h1>
-
-                {error && (
-                    <p className="text-sm text-red-500 text-center">{error}</p>
-                )}
-
-                <form onSubmit={handleSubmit} className="space-y-4">
-                    <div className="space-y-1">
-                        <label className="text-sm font-medium" htmlFor="email">
-                            E-mail
-                        </label>
-                        <input
-                            id="email"
-                            name="email"
-                            type="email"
-                            required
-                            className="w-full rounded-md border px-3 py-2 text-sm bg-background"
-                        />
+        <div className="flex min-h-[calc(100vh-4rem)] items-center justify-center px-4 py-12">
+            <div className="w-full max-w-sm">
+                {/* Header */}
+                <div className="mb-8 text-center">
+                    <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-2xl bg-white/8 ring-1 ring-white/15">
+                        <span className="text-sm font-black text-white">AI</span>
                     </div>
+                    <h1 className="text-2xl font-bold text-white">Vitaj späť</h1>
+                    <p className="mt-1.5 text-sm text-neutral-400">
+                        Prihlás sa do svojho účtu
+                    </p>
+                </div>
 
-                    <div className="space-y-1">
-                        <label className="text-sm font-medium" htmlFor="password">
-                            Heslo
-                        </label>
-                        <input
-                            id="password"
-                            name="password"
-                            type="password"
-                            required
-                            className="w-full rounded-md border px-3 py-2 text-sm bg-background"
-                        />
-                    </div>
+                {/* Card */}
+                <div className="rounded-2xl border border-white/10 bg-white/5 p-6 shadow-xl backdrop-blur-sm">
+                    {error && (
+                        <div className="mb-4 rounded-xl border border-red-500/20 bg-red-500/10 px-4 py-3 text-sm text-red-300">
+                            {error}
+                        </div>
+                    )}
 
-                    <Button
-                        type="submit"
-                        className="w-full"
-                        disabled={isLoading}
+                    <form onSubmit={handleSubmit} className="space-y-4">
+                        <div className="space-y-1.5">
+                            <label className="block text-sm font-medium text-neutral-300" htmlFor="email">
+                                E-mail
+                            </label>
+                            <input
+                                id="email"
+                                name="email"
+                                type="email"
+                                required
+                                autoComplete="email"
+                                placeholder="tvoj@email.sk"
+                                className="input-dark"
+                            />
+                        </div>
+
+                        <div className="space-y-1.5">
+                            <label className="block text-sm font-medium text-neutral-300" htmlFor="password">
+                                Heslo
+                            </label>
+                            <input
+                                id="password"
+                                name="password"
+                                type="password"
+                                required
+                                autoComplete="current-password"
+                                placeholder="••••••••"
+                                className="input-dark"
+                            />
+                        </div>
+
+                        <button
+                            type="submit"
+                            disabled={isLoading}
+                            className="btn-primary w-full mt-2"
+                        >
+                            {isLoading ? "Prihlasujem..." : "Prihlásiť sa"}
+                        </button>
+                    </form>
+                </div>
+
+                <p className="mt-4 text-center text-sm text-neutral-500">
+                    Nemáš účet?{" "}
+                    <Link
+                        href="/auth/register"
+                        className="text-sky-400 hover:text-sky-300 transition font-medium"
                     >
-                        {isLoading ? "Prihlasujem..." : "Prihlasit sa"}
-                    </Button>
-                </form>
-            </Card>
+                        Zaregistruj sa
+                    </Link>
+                </p>
+            </div>
         </div>
     );
 }

@@ -1,8 +1,8 @@
 // src/app/api/teacher/courses/[courseId]/students/route.ts
+
 import { NextRequest, NextResponse } from "next/server";
 
-const CORE_API_URL =
-    process.env.CORE_API_URL ?? "http://localhost:4000";
+const CORE_API_URL = process.env.CORE_API_URL ?? "http://localhost:4000";
 
 function getAccessToken(req: NextRequest): string | null {
     const cookies = req.headers.get("cookie") || "";
@@ -15,13 +15,23 @@ function getAccessToken(req: NextRequest): string | null {
 
 export async function GET(
     req: NextRequest,
-    { params }: { params: { courseId: string } },
+    ctx: { params: Promise<{ coursesId: string }> }
 ) {
     try {
         const token = getAccessToken(req);
-        const { courseId } = params;
+        const { coursesId } = await ctx.params;
+        const courseId = coursesId;
 
-        // TODO: URL podľa backendu
+        console.log("PROXY GET students -> courseId:", courseId);
+        console.log("PROXY GET students -> has token:", Boolean(token));
+
+        if (!courseId) {
+            return NextResponse.json(
+                { message: "Missing courseId" },
+                { status: 400 },
+            );
+        }
+
         const res = await fetch(
             `${CORE_API_URL}/teacher/courses/${courseId}/students`,
             {
@@ -33,16 +43,18 @@ export async function GET(
             },
         );
 
+        const text = await res.text().catch(() => "");
+        console.log("PROXY GET students -> backend status:", res.status);
+        console.log("PROXY GET students -> backend body:", text);
+
         if (!res.ok) {
-            const text = await res.text().catch(() => "");
-            console.error("Get students backend error:", text);
             return NextResponse.json(
-                { message: "Failed to load students" },
+                { message: "Failed to load students", backendBody: text },
                 { status: res.status },
             );
         }
 
-        const data = await res.json().catch(() => null);
+        const data = text ? JSON.parse(text) : null;
         const students = (data as any)?.students ?? data ?? [];
 
         return NextResponse.json({ students });
@@ -57,14 +69,25 @@ export async function GET(
 
 export async function POST(
     req: NextRequest,
-    { params }: { params: { courseId: string } },
+    ctx: { params: Promise<{ coursesId: string }> }
 ) {
     try {
         const token = getAccessToken(req);
-        const { courseId } = params;
+        const { coursesId } = await ctx.params;
+        const courseId = coursesId;
         const body = await req.json().catch(() => null);
 
-        // можна додавати за studentId або email – вибери, що зручніше
+        console.log("PROXY ADD student -> courseId:", courseId);
+        console.log("PROXY ADD student -> has token:", Boolean(token));
+        console.log("PROXY ADD student -> body:", body);
+
+        if (!courseId) {
+            return NextResponse.json(
+                { message: "Missing courseId" },
+                { status: 400 },
+            );
+        }
+
         if (!body || (!body.studentId && !body.studentEmail)) {
             return NextResponse.json(
                 { message: "Invalid payload" },
@@ -84,16 +107,18 @@ export async function POST(
             },
         );
 
+        const text = await res.text().catch(() => "");
+        console.log("PROXY ADD student -> backend status:", res.status);
+        console.log("PROXY ADD student -> backend body:", text);
+
         if (!res.ok) {
-            const text = await res.text().catch(() => "");
-            console.error("Add student backend error:", text);
             return NextResponse.json(
-                { message: "Failed to add student" },
+                { message: "Failed to add student", backendBody: text },
                 { status: res.status },
             );
         }
 
-        const data = await res.json().catch(() => null);
+        const data = text ? JSON.parse(text) : null;
         return NextResponse.json(data, { status: 201 });
     } catch (e) {
         console.error("Add student API error:", e);

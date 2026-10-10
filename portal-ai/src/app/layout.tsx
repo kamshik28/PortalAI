@@ -1,3 +1,4 @@
+//src/app/layout.tsx
 import type { Metadata } from "next";
 import { GeistSans } from "geist/font/sans";
 import { GeistMono } from "geist/font/mono";
@@ -5,6 +6,7 @@ import "./globals.css";
 import { ThemeProvider } from "@/components/ThemeProvider";
 import Navbar from "@/components/Navbar";
 import { Toaster } from "react-hot-toast";
+import { KeyboardShortcutsModal } from "@/components/KeyboardShortcutsModal";
 
 export const metadata: Metadata = {
     title: "PortalAI",
@@ -28,7 +30,7 @@ export default function RootLayout({
             disableTransitionOnChange
         >
             {/* ✅ Global background (full screen) */}
-            <div className="min-h-screen bg-[#07090c] text-white relative overflow-x-hidden">
+            <div className="min-h-screen bg-background text-foreground relative overflow-x-hidden">
                 {/* glow blobs */}
                 <div className="pointer-events-none fixed inset-0 -z-10">
                     <div className="absolute -top-24 left-1/2 h-72 w-[42rem] -translate-x-1/2 rounded-full bg-sky-500/15 blur-3xl" />
@@ -43,16 +45,21 @@ export default function RootLayout({
 
                 {/* Your existing layout */}
                 <main className="py-8">
-                    <div className="max-w-7xl mx-auto px-4">
-                        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-                            <div className="hidden lg:block lg:col-span-2"></div>
-                            <div className="lg:col-span-9">{children}</div>
-                        </div>
+                    <div className="max-w-5xl mx-auto px-4 sm:px-6">
+                        {children}
                     </div>
                 </main>
             </div>
 
-            <Toaster />
+            <Toaster
+                position="bottom-right"
+                toastOptions={{
+                    className: "!bg-popover !text-popover-foreground !border !border-border !rounded-xl !text-sm",
+                    success: { iconTheme: { primary: "#34d399", secondary: "transparent" } },
+                    error:   { iconTheme: { primary: "#f87171", secondary: "transparent" } },
+                }}
+            />
+            <KeyboardShortcutsModal />
         </ThemeProvider>
         </body>
         </html>

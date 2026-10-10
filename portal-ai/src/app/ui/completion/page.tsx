@@ -1,7 +1,8 @@
 // src/app/ui/completion/page.tsx
+
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import dynamic from "next/dynamic";
 import { logout } from "../../lib/logout";
 
@@ -22,24 +23,30 @@ type FlowiseMessage =
     };
 };
 
+function getCookie(name: string): string | null {
+    if (typeof document === "undefined") return null;
+    const cookies = document.cookie || "";
+    const found = cookies.split("; ").find((c) => c.startsWith(`${name}=`));
+    return found ? decodeURIComponent(found.split("=").slice(1).join("=")) : null;
+}
+
 export default function CompletionPage() {
+    const [isReady, setIsReady] = useState(false);
     const [userRole, setUserRole] = useState<UserRole>("student");
     const [authToken, setAuthToken] = useState<string>("");
+    const [userId, setUserId] = useState<string>("");
 
-    // 1) початкове читання role + token
     useEffect(() => {
         if (typeof document === "undefined") return;
 
-        const cookies = document.cookie || "";
-        const roleCookie = cookies
-            .split("; ")
-            .find((c) => c.startsWith("user_role="));
-
-        const role = roleCookie?.split("=")[1];
+        const role = getCookie("user_role");
+        const cookieUserId = getCookie("user_id") ?? "";
 
         if (role === "teacher" || role === "student") {
             setUserRole(role);
         }
+
+        setUserId(cookieUserId);
 
         const tokenFromStorage =
             typeof window !== "undefined"
@@ -49,9 +56,10 @@ export default function CompletionPage() {
         if (tokenFromStorage) {
             setAuthToken(tokenFromStorage);
         }
+
+        setIsReady(true);
     }, []);
 
-    // 2) guard: якщо user_role зник з cookie → викидаємо на /login
     useEffect(() => {
         if (typeof document === "undefined") return;
 
@@ -62,7 +70,6 @@ export default function CompletionPage() {
                 .some((c) => c.startsWith("user_role="));
 
             if (!hasRole) {
-                // кукі вже прибив проксі → чистимо localStorage і редіректимо
                 try {
                     window.localStorage.removeItem("access_token");
                     window.localStorage.removeItem("refresh_token");
@@ -77,15 +84,31 @@ export default function CompletionPage() {
         return () => clearInterval(interval);
     }, []);
 
+    const sessionId = useMemo(() => {
+        const uid = userId || "anon";
+        return `portal_global_${userRole}_${uid}`;
+    }, [userRole, userId]);
+
+    if (!isReady) {
+        return (
+            <div className="w-screen h-screen flex items-center justify-center text-sm text-muted-foreground">
+                Načítavam chat...
+            </div>
+        );
+    }
+
     return (
         <div className="w-screen h-screen">
             <FullPageChat
+                key={sessionId}
                 chatflowid="fe844743-dd08-4086-b0b0-c3db50ef5026"
                 apiHost="http://localhost:3000"
                 chatflowConfig={{
+                    sessionId,
                     vars: {
                         userRole,
                         authToken,
+                        userId,
                     },
                 }}
                 observersConfig={{
@@ -96,7 +119,6 @@ export default function CompletionPage() {
                             return;
                         }
 
-                        // шукаємо PORTAL_LOGOUT в СТЕКУ повідомлень
                         const hasLogoutToken = messages.some((m) => {
                             let text: string | undefined;
 
@@ -113,7 +135,7 @@ export default function CompletionPage() {
                         });
 
                         if (hasLogoutToken) {
-                            void logout(); // додатковий софт-logout, якщо хочеш
+                            void logout();
                         }
                     },
                 }}
@@ -157,7 +179,7 @@ export default function CompletionPage() {
                         fontSize: 16,
                         starterPrompts: ["What is a bot?", "Who are you?"],
                         starterPromptFontSize: 15,
-                        clearChatOnReload: false,
+                        clearChatOnReload: true,
                         sourceDocsTitle: "Sources:",
                         renderHTML: true,
                         botMessage: {

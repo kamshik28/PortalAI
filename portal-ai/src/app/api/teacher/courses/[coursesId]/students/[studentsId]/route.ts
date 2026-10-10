@@ -1,25 +1,68 @@
 // src/app/api/teacher/courses/[courseId]/students/[studentId]/route.ts
+
+
 import { NextRequest, NextResponse } from "next/server";
 
-const CORE_API_URL =
-    process.env.CORE_API_URL ?? "http://localhost:4000";
+const CORE_API_URL = process.env.CORE_API_URL ?? "http://localhost:4000";
 
 function getAccessToken(req: NextRequest): string | null {
-    const cookies = req.headers.get("cookie") || "";
-    const tokenCookie = cookies
-        .split("; ")
-        .find((c) => c.startsWith("access_token="));
+    return req.cookies.get("access_token")?.value ?? null;
+}
 
-    return tokenCookie?.split("=")[1] ?? null;
+function extractIdsFromPath(pathname: string): {
+    courseId: string;
+    studentId: string;
+} {
+    const match = pathname.match(
+        /\/api\/teacher\/courses\/([^/]+)\/students\/([^/]+)\/?$/i
+    );
+
+    return {
+        courseId: match?.[1] ?? "",
+        studentId: match?.[2] ?? "",
+    };
 }
 
 export async function DELETE(
     req: NextRequest,
-    { params }: { params: { courseId: string; studentId: string } },
+    ctx: {
+        params: Promise<{
+            courseId?: string;
+            coursesId?: string;
+            studentId?: string;
+            studentsId?: string;
+            studentid?: string;
+        }>;
+    }
 ) {
     try {
         const token = getAccessToken(req);
-        const { courseId, studentId } = params;
+        const params = await ctx.params;
+        const idsFromPath = extractIdsFromPath(req.nextUrl.pathname);
+
+        const courseId =
+            params.courseId ??
+            params.coursesId ??
+            idsFromPath.courseId ??
+            "";
+
+        const studentId =
+            params.studentId ??
+            params.studentsId ??
+            params.studentid ??
+            idsFromPath.studentId ??
+            "";
+
+        console.log("REMOVE STUDENT PROXY -> courseId:", courseId);
+        console.log("REMOVE STUDENT PROXY -> studentId:", studentId);
+        console.log("REMOVE STUDENT PROXY -> has token:", Boolean(token));
+
+        if (!courseId || !studentId) {
+            return NextResponse.json(
+                { message: "Missing courseId or studentId" },
+                { status: 400 }
+            );
+        }
 
         const res = await fetch(
             `${CORE_API_URL}/teacher/courses/${courseId}/students/${studentId}`,
@@ -29,24 +72,27 @@ export async function DELETE(
                     "Content-Type": "application/json",
                     ...(token ? { Authorization: `Bearer ${token}` } : {}),
                 },
-            },
+            }
         );
 
+        const text = await res.text().catch(() => "");
+
+        console.log("REMOVE STUDENT PROXY -> backend status:", res.status);
+        console.log("REMOVE STUDENT PROXY -> backend body:", text);
+
         if (!res.ok) {
-            const text = await res.text().catch(() => "");
-            console.error("Remove student backend error:", text);
             return NextResponse.json(
-                { message: "Failed to remove student" },
-                { status: res.status },
+                { message: "Failed to remove student", backendBody: text },
+                { status: res.status }
             );
         }
 
-        return NextResponse.json({ success: true });
+        return NextResponse.json({ success: true }, { status: 200 });
     } catch (e) {
         console.error("Remove student API error:", e);
         return NextResponse.json(
             { message: "Internal error" },
-            { status: 500 },
+            { status: 500 }
         );
     }
 }

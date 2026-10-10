@@ -5,6 +5,7 @@ const FLOWISE_INTERNAL_URL =
     process.env.FLOWISE_INTERNAL_URL ?? "http://localhost:2000";
 
 type UserRole = "student" | "teacher";
+type FlowiseVars = Record<string, unknown>;
 
 function getUserRoleFromCookies(req: NextRequest): UserRole {
     const value = req.cookies.get("user_role")?.value;
@@ -12,22 +13,46 @@ function getUserRoleFromCookies(req: NextRequest): UserRole {
     return "student";
 }
 
-/**
- * Дістає vars (courseId/userId) з тіла, незалежно від того як Flowise embed їх кладе.
- */
-function extractVarsFromBody(body: any): Record<string, any> {
-    return (
-        body?.overrideConfig?.vars ??
-        body?.chatflowConfig?.vars ??
-        body?.vars ??
-        {}
-    );
+function getAccessTokenFromCookies(req: NextRequest): string {
+    return req.cookies.get("access_token")?.value ?? "";
 }
 
-export const runtime = "nodejs"; // на всяк, щоб проксі стріми нормально
+function getUserIdFromCookies(req: NextRequest): string {
+    return req.cookies.get("user_id")?.value ?? "";
+}
+
+function getMergedVars(body: Record<string, unknown>): FlowiseVars {
+    const topLevelVars =
+        body.vars && typeof body.vars === "object"
+            ? (body.vars as FlowiseVars)
+            : {};
+
+    const chatflowVars =
+        body.chatflowConfig &&
+        typeof body.chatflowConfig === "object" &&
+        (body.chatflowConfig as any).vars &&
+        typeof (body.chatflowConfig as any).vars === "object"
+            ? ((body.chatflowConfig as any).vars as FlowiseVars)
+            : {};
+
+    const overrideVars =
+        body.overrideConfig &&
+        typeof body.overrideConfig === "object" &&
+        (body.overrideConfig as any).vars &&
+        typeof (body.overrideConfig as any).vars === "object"
+            ? ((body.overrideConfig as any).vars as FlowiseVars)
+            : {};
+
+    return {
+        ...topLevelVars,
+        ...chatflowVars,
+        ...overrideVars,
+    };
+}
+
+export const runtime = "nodejs";
 
 export async function POST(req: NextRequest) {
-    // 1) дістаємо chatflowid з query
     const url = new URL(req.url);
     const chatflowid = url.searchParams.get("chatflowid");
 
@@ -38,7 +63,6 @@ export async function POST(req: NextRequest) {
         );
     }
 
-    // 2) читаємо тіло від FullPageChat
     const rawBody = await req.json().catch(() => null);
 
     if (!rawBody || typeof rawBody !== "object") {
@@ -51,37 +75,60 @@ export async function POST(req: NextRequest) {
     const body = rawBody as Record<string, unknown>;
 
     const originalQuestion =
-        typeof (body as any).question === "string" ? (body as any).question : "";
+        typeof body.question === "string" ? body.question : "";
 
     const userRole = getUserRoleFromCookies(req);
+    const authToken = getAccessTokenFromCookies(req);
+    const cookieUserId = getUserIdFromCookies(req);
 
-    // ✅ витягаємо vars (courseId/userId)
-    const vars = extractVarsFromBody(body);
+    const mergedVars = getMergedVars(body);
 
-    const courseId = typeof vars.courseId === "string" ? vars.courseId : "";
-    const userId = typeof vars.userId === "string" ? vars.userId : "";
+    const courseId = typeof mergedVars.courseId === "string" ? mergedVars.courseId : "";
+    const userId =
+        typeof mergedVars.userId === "string" && mergedVars.userId
+            ? mergedVars.userId
+            : cookieUserId;
 
-    // 3) формуємо наш JSON для question
-    const questionPayload = {
-        userRole: userRole, // "student" | "teacher" з куки
-        courseId: courseId, // ✅ щоб Flowise знав курс
-        userId: userId,     // ✅ опційно
-        message: originalQuestion, // те, що реально написав юзер
+    const finalVars: FlowiseVars = {
+        ...mergedVars,
+        courseId,
+        userId,
+        userRole,
+        authToken,
     };
+
+    const existingOverrideConfig =
+        body.overrideConfig && typeof body.overrideConfig === "object"
+            ? (body.overrideConfig as Record<string, unknown>)
+            : {};
+
+    const existingChatflowConfig =
+        body.chatflowConfig && typeof body.chatflowConfig === "object"
+            ? (body.chatflowConfig as Record<string, unknown>)
+            : {};
 
     const proxiedBody: Record<string, unknown> = {
         ...body,
-        question: JSON.stringify(questionPayload),
+        question: originalQuestion,
+        vars: finalVars,
+        chatflowConfig: {
+            ...existingChatflowConfig,
+            vars: finalVars,
+        },
+        overrideConfig: {
+            ...existingOverrideConfig,
+            vars: finalVars,
+        },
     };
 
     console.log("➡️ Proxy to Flowise /api/v1/chat");
-    console.log("   role:", userRole);
+    console.log("   userRole:", userRole);
     console.log("   courseId:", courseId);
     console.log("   userId:", userId);
+    console.log("   hasAuthToken:", Boolean(authToken));
     console.log("   originalQuestion:", originalQuestion);
-    console.log("   final question:", proxiedBody.question);
+    console.log("   final vars:", (proxiedBody.overrideConfig as any)?.vars);
 
-    // 4) шлемо далі в Flowise
     const flowiseRes = await fetch(
         `${FLOWISE_INTERNAL_URL}/api/v1/chat?chatflowid=${encodeURIComponent(
             chatflowid
@@ -95,7 +142,6 @@ export async function POST(req: NextRequest) {
         }
     );
 
-    // 5) просто пробрасываем відповідь як є (в т.ч. стрім)
     return new Response(flowiseRes.body, {
         status: flowiseRes.status,
         headers: {

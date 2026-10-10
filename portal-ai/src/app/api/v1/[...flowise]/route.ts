@@ -1,24 +1,44 @@
 // src/app/api/v1/[...flowise]/route.ts
+
+
 import { NextRequest, NextResponse } from "next/server";
 
 const FLOWISE_BASE = process.env.FLOWISE_BASE ?? "http://localhost:2000";
+const CORE_API_URL = process.env.CORE_API_URL ?? "http://localhost:4000";
 
 type FlowiseParams = {
-    flowise: string[]; // napr. ["prediction", "<id>"]
+    flowise: string[];
+};
+
+type FlowiseVars = Record<string, unknown>;
+
+type FlowiseRequestBody = {
+    question?: string;
+    overrideConfig?: {
+        vars?: FlowiseVars;
+        [key: string]: unknown;
+    };
+    chatflowConfig?: {
+        vars?: FlowiseVars;
+        [key: string]: unknown;
+    };
+    vars?: FlowiseVars;
+    [key: string]: unknown;
 };
 
 function getUserRoleFromCookies(req: NextRequest): "student" | "teacher" {
-    const cookies = req.headers.get("cookie") || "";
-    const roleCookie = cookies
-        .split("; ")
-        .find((c) => c.startsWith("user_role="));
-
-    const value = roleCookie?.split("=")[1];
-    if (value === "teacher") return "teacher";
-    return "student";
+    const value = req.cookies.get("user_role")?.value;
+    return value === "teacher" ? "teacher" : "student";
 }
 
-// проста перевірка на "хочу вийти з акаунту"
+function getAccessTokenFromCookies(req: NextRequest): string {
+    return req.cookies.get("access_token")?.value ?? "";
+}
+
+function getUserIdFromCookies(req: NextRequest): string {
+    return req.cookies.get("user_id")?.value ?? "";
+}
+
 function isLogoutIntent(text: string): boolean {
     const lower = text.toLowerCase();
 
@@ -47,20 +67,78 @@ function isLogoutIntent(text: string): boolean {
     return patterns.some((p) => lower.includes(p));
 }
 
+function getMergedVars(original: FlowiseRequestBody): FlowiseVars {
+    const topLevelVars =
+        original.vars && typeof original.vars === "object"
+            ? original.vars
+            : {};
+
+    const chatflowVars =
+        original.chatflowConfig?.vars && typeof original.chatflowConfig.vars === "object"
+            ? original.chatflowConfig.vars
+            : {};
+
+    const overrideVars =
+        original.overrideConfig?.vars && typeof original.overrideConfig.vars === "object"
+            ? original.overrideConfig.vars
+            : {};
+
+    return {
+        ...topLevelVars,
+        ...chatflowVars,
+        ...overrideVars,
+    };
+}
+
+function getStringVar(vars: FlowiseVars, key: string): string {
+    const value = vars[key];
+    return typeof value === "string" ? value : "";
+}
+
 /**
- * Дістає vars (courseId/userId) з тіла, незалежно від того як Flowise embed їх кладе.
- * Працює з такими варіантами:
- * - overrideConfig.vars
- * - chatflowConfig.vars
- * - vars
+ * Returns true when `id` looks like a UUID (RFC-4122, any version).
+ * AIS chatCourseIds are created with randomUUID() → always UUID.
+ * Regular Course IDs are Prisma CUIDs (e.g. clv8abc123…) → never UUID.
+ * This lets the proxy detect an AIS chat request without a flag from the frontend.
  */
-function extractVarsFromBody(original: any): Record<string, any> {
-    return (
-        original?.overrideConfig?.vars ??
-        original?.chatflowConfig?.vars ??
-        original?.vars ??
-        {}
-    );
+function isUuidFormat(id: string): boolean {
+    return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
+}
+
+/**
+ * Resolves the active AIS subject for the authenticated user from the backend.
+ * Returns the subject's id and chatCourseId, or null if the user has no active subject.
+ * This is the backend source of truth — it cannot be spoofed by the frontend.
+ */
+async function resolveActiveAisSubject(
+    authToken: string,
+): Promise<{ id: string; chatCourseId: string; code: string } | null> {
+    if (!authToken) return null;
+
+    try {
+        const res = await fetch(`${CORE_API_URL}/student/ais/active-subject`, {
+            method: "GET",
+            headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${authToken}`,
+            },
+        });
+
+        if (!res.ok) return null;
+
+        const data = (await res.json()) as {
+            activeSubject?: {
+                id: string;
+                chatCourseId: string;
+                code: string;
+            } | null;
+        };
+
+        return data?.activeSubject ?? null;
+    } catch (err) {
+        console.error("❌ resolveActiveAisSubject failed:", err);
+        return null;
+    }
 }
 
 async function handler(
@@ -68,7 +146,7 @@ async function handler(
     ctx: { params: Promise<FlowiseParams> }
 ) {
     const { flowise } = await ctx.params;
-    const path = flowise.join("/"); // "prediction/fe8..."
+    const path = flowise.join("/");
     const incomingUrl = new URL(req.url);
 
     const targetUrl = `${FLOWISE_BASE}/api/v1/${path}${incomingUrl.search}`;
@@ -79,58 +157,94 @@ async function handler(
     headers.delete("host");
     headers.delete("content-length");
 
-    let body: BodyInit | undefined = undefined;
-    let logoutRequested = false; // <- запам’ятаємо, що це був логаут-запит
+    let body: BodyInit | undefined;
+    let logoutRequested = false;
 
     if (req.method !== "GET" && req.method !== "HEAD") {
         const contentType = req.headers.get("content-type") ?? "";
 
         try {
             if (contentType.includes("application/json")) {
-                const original = (await req.json()) as any;
+                const original = (await req.json()) as FlowiseRequestBody;
 
                 const pathLower = path.toLowerCase();
                 const isChatRequest =
                     pathLower.startsWith("prediction/") ||
                     pathLower.startsWith("chatflows/") ||
                     pathLower.startsWith("chatflows-streaming/") ||
-                    pathLower.startsWith("chat/"); // інколи теж пролітає
+                    pathLower.startsWith("chat/");
 
                 if (isChatRequest) {
                     const userRole = getUserRoleFromCookies(req);
-
+                    const authToken = getAccessTokenFromCookies(req);
+                    const cookieUserId = getUserIdFromCookies(req);
                     const questionText =
                         typeof original.question === "string" ? original.question : "";
 
-                    // тут ловимо "logout"
                     logoutRequested = isLogoutIntent(questionText);
                     if (logoutRequested) {
-                        console.log("   🔐 logout intent detected");
+                        console.log("🔐 logout intent detected");
                     }
 
-                    // ✅ ВАЖЛИВО: дістаємо vars з тіла (courseId/userId)
-                    const vars = extractVarsFromBody(original);
+                    const mergedVars = getMergedVars(original);
+                    const frontendCourseId = getStringVar(mergedVars, "courseId");
+                    const userId = getStringVar(mergedVars, "userId") || cookieUserId;
 
-                    const courseId = typeof vars.courseId === "string" ? vars.courseId : "";
-                    const userId = typeof vars.userId === "string" ? vars.userId : "";
+                    // Resolve the active AIS subject ONLY when the request is AIS chat.
+                    // AIS chatCourseIds are UUIDs; regular Course IDs are Prisma CUIDs.
+                    // This prevents the proxy from overriding the courseId for regular
+                    // course chat pages that also use CourseChat with a CUID.
+                    let resolvedCourseId = frontendCourseId;
+                    const isAisChatRequest = isUuidFormat(frontendCourseId);
 
-                    const wrappedQuestion = JSON.stringify({
-                        userRole: userRole, // "student" | "teacher"
-                        courseId: courseId, // ✅ щоб Flowise знав курс
-                        userId: userId,     // ✅ (не обов'язково, але корисно)
-                        message: questionText, // реальний текст юзера
-                    });
+                    if (userRole === "student" && authToken && isAisChatRequest) {
+                        const active = await resolveActiveAisSubject(authToken);
+                        if (active) {
+                            resolvedCourseId = active.chatCourseId;
+                            console.log(`✅ AIS active subject: ${active.code} → courseId=${resolvedCourseId}`);
+                        } else {
+                            console.log("ℹ️ UUID courseId but no active AIS subject — keeping frontend value");
+                        }
+                    }
 
-                    console.log("   role:", userRole);
-                    console.log("   courseId:", courseId);
-                    console.log("   userId:", userId);
-                    console.log("   original question:", questionText);
-                    console.log("   wrapped question:", wrappedQuestion);
+                    const finalVars: FlowiseVars = {
+                        ...mergedVars,
+                        courseId: resolvedCourseId,
+                        userId,
+                        userRole,
+                        authToken,
+                    };
 
-                    body = JSON.stringify({
+                    const existingOverrideConfig =
+                        original.overrideConfig && typeof original.overrideConfig === "object"
+                            ? original.overrideConfig
+                            : {};
+
+                    const existingChatflowConfig =
+                        original.chatflowConfig && typeof original.chatflowConfig === "object"
+                            ? original.chatflowConfig
+                            : {};
+
+                    // Prefix keeps role + courseId visible to the Flowise chatflow
+                    // prompt template, but stays concise.
+                    const userMarker = userId ? `[USER_ID:${userId}] ` : "";
+                    const courseMarker = resolvedCourseId ? `[COURSE_ID:${resolvedCourseId}] ` : "";
+
+                    const finalQuestion =
+                        `[ROLE:${userRole}] ${userMarker}${courseMarker}${questionText}`.trim();
+
+                    const proxiedPayload: FlowiseRequestBody = {
                         ...original,
-                        question: wrappedQuestion,
-                    });
+                        question: finalQuestion,
+                        vars: finalVars,
+                        chatflowConfig: { ...existingChatflowConfig, vars: finalVars },
+                        overrideConfig:  { ...existingOverrideConfig,  vars: finalVars },
+                    };
+
+                    console.log("role:", userRole, "| courseId:", resolvedCourseId, "| userId:", userId, "| hasToken:", Boolean(authToken));
+                    console.log("question:", finalQuestion);
+
+                    body = JSON.stringify(proxiedPayload);
                 } else {
                     body = JSON.stringify(original);
                 }
@@ -175,7 +289,6 @@ async function handler(
         resHeaders.set("Access-Control-Allow-Origin", origin);
         resHeaders.set("Access-Control-Allow-Credentials", "true");
 
-        // 🔑 якщо це був логаут – чистимо кукі саме в ЦІЙ відповіді
         if (logoutRequested) {
             const response = new NextResponse(flowiseRes.body, {
                 status: flowiseRes.status,
@@ -196,11 +309,17 @@ async function handler(
                 sameSite: "lax",
             });
 
-            console.log("   🔐 cookies cleared by proxy (logout)");
+            response.cookies.set("user_id", "", {
+                path: "/",
+                httpOnly: false,
+                maxAge: 0,
+                sameSite: "lax",
+            });
+
+            console.log("🔐 cookies cleared by proxy (logout)");
             return response;
         }
 
-        // звичайний випадок – просто пробрасываем тіло далі
         return new Response(flowiseRes.body, {
             status: flowiseRes.status,
             headers: resHeaders,

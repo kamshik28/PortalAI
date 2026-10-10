@@ -5,12 +5,7 @@ const CORE_API_URL =
     process.env.CORE_API_URL ?? "http://localhost:4000";
 
 function getAccessToken(req: NextRequest): string | null {
-    const cookies = req.headers.get("cookie") || "";
-    const tokenCookie = cookies
-        .split("; ")
-        .find((c) => c.startsWith("access_token="));
-
-    return tokenCookie?.split("=")[1] ?? null;
+    return req.cookies.get("access_token")?.value ?? null;
 }
 
 export async function GET(req: NextRequest) {
@@ -19,6 +14,7 @@ export async function GET(req: NextRequest) {
 
         const res = await fetch(`${CORE_API_URL}/teacher/courses`, {
             method: "GET",
+            cache: "no-store",
             headers: {
                 "Content-Type": "application/json",
                 ...(token ? { Authorization: `Bearer ${token}` } : {}),
@@ -33,14 +29,12 @@ export async function GET(req: NextRequest) {
                 res.status,
                 text,
             );
-            // поки що просто пробрасываем статус з беку
             return NextResponse.json(
                 { message: "Failed to load courses", backendBody: text },
                 { status: res.status },
             );
         }
 
-        // якщо бек повернув JSON – парсимо його
         const data = text ? JSON.parse(text) : null;
         const courses = (data as any)?.courses ?? data ?? [];
 

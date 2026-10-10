@@ -1,17 +1,16 @@
 // src/components/MobileNavbar.tsx
-
-
 "use client";
 
 import {
-    BellIcon,
-    HomeIcon,
+    BookOpenIcon,
+    DatabaseIcon,
+    HelpCircleIcon,
+    LayoutDashboardIcon,
+    LogOutIcon,
     MenuIcon,
-    MoonIcon,
-    SunIcon,
-    ChartBarIcon,
+    SettingsIcon,
+    UserIcon,
 } from "lucide-react";
-import { Button } from "@/components/ui/button";
 import {
     Sheet,
     SheetContent,
@@ -20,96 +19,239 @@ import {
     SheetTrigger,
 } from "@/components/ui/sheet";
 import Link from "next/link";
-import { useTheme } from "next-themes";
 import { useEffect, useState } from "react";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
+import { cn } from "@/lib/utils";
+import { UserAvatar } from "@/components/UserAvatar";
+import { usePreferences } from "@/hooks/usePreferences";
+
+type UserRole = "student" | "teacher" | null;
+
+function readSessionFromCookies(): { role: UserRole; userId: string | null } {
+    if (typeof document === "undefined") return { role: null, userId: null };
+    const cookies = document.cookie || "";
+    const get = (name: string) => {
+        const c = cookies.split("; ").find((x) => x.startsWith(name + "="));
+        return c ? decodeURIComponent(c.split("=")[1] || "") : null;
+    };
+    const rawRole = get("user_role");
+    const role =
+        rawRole === "student" || rawRole === "teacher" ? rawRole : null;
+    return { role, userId: get("user_id") };
+}
+
+function MobileNavLink({
+    href,
+    icon,
+    label,
+    active,
+    onClick,
+}: {
+    href: string;
+    icon: React.ReactNode;
+    label: string;
+    active: boolean;
+    onClick?: () => void;
+}) {
+    return (
+        <Link
+            href={href}
+            onClick={onClick}
+            className={cn(
+                "flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition",
+                active
+                    ? "bg-sky-100 text-sky-700 dark:bg-accent dark:text-accent-foreground"
+                    : "text-muted-foreground hover:bg-muted hover:text-foreground"
+            )}
+        >
+            {icon}
+            {label}
+        </Link>
+    );
+}
 
 function MobileNavbar() {
-    const [showMobileMenu, setShowMobileMenu] = useState(false);
-    const [isLoggedIn, setIsLoggedIn] = useState(false);
-    const { theme, setTheme } = useTheme();
+    const [showMenu, setShowMenu] = useState(false);
+    const [role, setRole] = useState<UserRole>(null);
+    const [userId, setUserId] = useState<string | null>(null);
     const pathname = usePathname();
+    const router = useRouter();
+    const { prefs, loaded } = usePreferences();
 
     useEffect(() => {
-        if (typeof document !== "undefined") {
-            const hasToken = document.cookie.includes("access_token=");
-            setIsLoggedIn(hasToken);
-        }
+        const { role: r, userId: uid } = readSessionFromCookies();
+        setRole(r);
+        setUserId(uid);
     }, [pathname]);
 
-    return (
-        <div className="flex md:hidden items-center space-x-2">
-            <Button
-                variant="ghost"
-                size="icon"
-                onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
-                className="mr-2"
-            >
-                <SunIcon className="h-[1.2rem] w-[1.2rem] rotate-0 scale-100 transition-all dark:-rotate-90 dark:scale-0" />
-                <MoonIcon className="absolute h-[1.2rem] w-[1.2rem] rotate-90 scale-0 transition-all dark:rotate-0 dark:scale-100" />
-                <span className="sr-only">Toggle theme</span>
-            </Button>
+    async function handleLogout() {
+        try {
+            await fetch("/api/auth/logout", { method: "POST" });
+        } catch {
+            // ignore
+        } finally {
+            setRole(null);
+            setUserId(null);
+            setShowMenu(false);
+            router.push("/");
+            router.refresh();
+        }
+    }
 
-            <Sheet open={showMobileMenu} onOpenChange={setShowMobileMenu}>
+    const isActive = (href: string) =>
+        href === "/" ? pathname === "/" : pathname.startsWith(href);
+
+    const coursesHref =
+        role === "teacher" ? "/teacher/courses" : "/student/courses";
+
+    const avatarColorId = loaded ? prefs.avatarColorId : "sky";
+    const displayName = loaded ? prefs.displayName : "";
+    const label = displayName || (role === "teacher" ? "Učiteľ" : role === "student" ? "Študent" : null);
+
+    return (
+        <div className="flex md:hidden items-center gap-2">
+            <Sheet open={showMenu} onOpenChange={setShowMenu}>
                 <SheetTrigger asChild>
-                    <Button variant="ghost" size="icon">
-                        <MenuIcon className="h-5 w-5" />
-                    </Button>
+                    <button
+                        type="button"
+                        className="flex items-center justify-center h-9 w-9 rounded-xl border border-border bg-muted/50 text-muted-foreground hover:bg-muted hover:text-foreground transition"
+                    >
+                        <MenuIcon className="h-4 w-4" />
+                        <span className="sr-only">Menu</span>
+                    </button>
                 </SheetTrigger>
-                <SheetContent side="right" className="w-[300px]">
-                    <SheetHeader>
-                        <SheetTitle>Menu</SheetTitle>
+
+                <SheetContent
+                    side="right"
+                    className="w-[280px] border-l border-border bg-background p-0"
+                >
+                    <SheetHeader className="border-b border-border px-5 py-4">
+                        <SheetTitle className="text-left text-base font-bold text-foreground">
+                            Portal<span className="text-sky-400">AI</span>
+                        </SheetTitle>
                     </SheetHeader>
 
-                    <nav className="flex flex-col space-y-4 mt-6">
-                        <Button
-                            variant="ghost"
-                            className="flex items-center gap-3 justify-start"
-                            asChild
-                        >
-                            <Link href="/">
-                                <HomeIcon className="w-4 h-4" />
-                                Home
-                            </Link>
-                        </Button>
+                    {/* User info */}
+                    {role && (
+                        <div className="border-b border-border px-5 py-4">
+                            <div className="flex items-center gap-3">
+                                <UserAvatar
+                                    role={role}
+                                    colorId={avatarColorId}
+                                    displayName={displayName || undefined}
+                                    size="md"
+                                />
+                                <div className="min-w-0">
+                                    <p className="truncate text-sm font-medium text-foreground">
+                                        {label}
+                                    </p>
+                                    {userId && (
+                                        <p className="text-xs text-neutral-500 font-mono truncate max-w-[160px]">
+                                            {userId.slice(0, 16)}…
+                                        </p>
+                                    )}
+                                </div>
+                            </div>
+                        </div>
+                    )}
 
-                        <Button
-                            variant="ghost"
-                            className="flex items-center gap-3 justify-start"
-                            asChild
-                        >
-                            <Link href="/notifications">
-                                <BellIcon className="w-4 h-4" />
-                                Notifications
-                            </Link>
-                        </Button>
+                    <nav className="flex flex-col gap-1 p-3">
+                        {role === "student" && (
+                            <MobileNavLink
+                                href="/student"
+                                icon={<LayoutDashboardIcon className="h-4 w-4" />}
+                                label="Dashboard"
+                                active={
+                                    isActive("/student") &&
+                                    !pathname.startsWith("/student/courses") &&
+                                    !pathname.startsWith("/student/ais")
+                                }
+                                onClick={() => setShowMenu(false)}
+                            />
+                        )}
 
-                        <Button
-                            variant="ghost"
-                            className="flex items-center gap-3 justify-start"
-                            asChild
-                        >
-                            <Link href="/ui/completion">
-                                <ChartBarIcon className="w-4 h-4" />
-                                Chat
-                            </Link>
-                        </Button>
+                        {role !== null && (
+                            <MobileNavLink
+                                href={coursesHref}
+                                icon={<BookOpenIcon className="h-4 w-4" />}
+                                label="Kurzy"
+                                active={
+                                    isActive("/student/courses") ||
+                                    isActive("/teacher/courses")
+                                }
+                                onClick={() => setShowMenu(false)}
+                            />
+                        )}
 
-                        {isLoggedIn ? (
-                            <span className="text-sm text-muted-foreground">
-                Prihlaseny
-              </span>
-                        ) : (
+                        {role === "student" && (
+                            <MobileNavLink
+                                href="/student/ais"
+                                icon={<DatabaseIcon className="h-4 w-4" />}
+                                label="AIS"
+                                active={isActive("/student/ais")}
+                                onClick={() => setShowMenu(false)}
+                            />
+                        )}
+
+                        {role !== null && (
                             <>
-                                <Button variant="outline" className="w-full" asChild>
-                                    <Link href="/auth/login">Login</Link>
-                                </Button>
-                                <Button variant="default" className="w-full" asChild>
-                                    <Link href="/auth/register">Register</Link>
-                                </Button>
+                                <div className="my-1 border-t border-border" />
+                                <MobileNavLink
+                                    href="/profile"
+                                    icon={<UserIcon className="h-4 w-4" />}
+                                    label="Môj profil"
+                                    active={isActive("/profile")}
+                                    onClick={() => setShowMenu(false)}
+                                />
+                                <MobileNavLink
+                                    href="/settings"
+                                    icon={<SettingsIcon className="h-4 w-4" />}
+                                    label="Nastavenia"
+                                    active={isActive("/settings")}
+                                    onClick={() => setShowMenu(false)}
+                                />
                             </>
                         )}
+
+                        <MobileNavLink
+                            href="/help"
+                            icon={<HelpCircleIcon className="h-4 w-4" />}
+                            label="Pomoc"
+                            active={isActive("/help")}
+                            onClick={() => setShowMenu(false)}
+                        />
                     </nav>
+
+                    {/* Bottom actions */}
+                    <div className="absolute bottom-0 left-0 right-0 border-t border-border p-3">
+                        {role ? (
+                            <button
+                                type="button"
+                                onClick={handleLogout}
+                                className="flex w-full items-center gap-2 rounded-xl px-3 py-2.5 text-sm font-medium text-red-400 hover:bg-red-500/10 hover:text-red-300 transition"
+                            >
+                                <LogOutIcon className="h-4 w-4" />
+                                Odhlásiť sa
+                            </button>
+                        ) : (
+                            <div className="flex flex-col gap-2">
+                                <Link
+                                    href="/auth/login"
+                                    onClick={() => setShowMenu(false)}
+                                    className="flex items-center justify-center rounded-xl border border-border bg-muted/50 py-2.5 text-sm font-medium text-foreground hover:bg-muted transition"
+                                >
+                                    Prihlásenie
+                                </Link>
+                                <Link
+                                    href="/auth/register"
+                                    onClick={() => setShowMenu(false)}
+                                    className="flex items-center justify-center rounded-xl bg-foreground py-2.5 text-sm font-semibold text-background hover:bg-foreground/90 transition"
+                                >
+                                    Registrácia
+                                </Link>
+                            </div>
+                        )}
+                    </div>
                 </SheetContent>
             </Sheet>
         </div>
