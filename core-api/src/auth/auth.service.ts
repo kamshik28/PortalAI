@@ -1,22 +1,28 @@
 // auth.service.ts
 
 import { BadRequestException, Injectable } from '@nestjs/common';
+import * as bcrypt from 'bcrypt';
 import { PrismaService } from '../prisma/prisma.service';
 import { Role } from '@prisma/client';
 import { randomUUID } from 'crypto';
+
+// Argon2/bcrypt work-factor: ~300 ms on modern hardware — appropriate for 2025.
+const BCRYPT_ROUNDS = 12;
+
+// Login sessions are valid for 7 days.
+const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 interface RegisterInput {
   email: string;
   fullName?: string | null;
   username?: string | null;
   role?: 'student' | 'teacher';
-  // password прилетит, але поки не використовуємо
-  password?: string | null;
+  password: string;
 }
 
 interface LoginInput {
   email: string;
-  password?: string | null;
+  password: string;
 }
 
 @Injectable()
@@ -29,21 +35,21 @@ export class AuthService {
   }
 
   async register(data: RegisterInput) {
-    console.log('REGISTER data:', data);
-
     const { email, fullName, role } = data;
+    const password = typeof data.password === 'string' ? data.password : '';
 
     if (!email) {
       throw new BadRequestException('Email is required');
     }
+    if (!password || password.length < 6) {
+      throw new BadRequestException('Password must be at least 6 characters');
+    }
 
-    // 1) формуємо username
     let username = (data.username ?? '').trim();
     if (!username) {
       username = email.split('@')[0];
     }
 
-    // 2) перевірка email
     const existingByEmail = await this.prisma.user.findUnique({
       where: { email },
     });
@@ -51,68 +57,87 @@ export class AuthService {
       throw new BadRequestException('User with this email already exists');
     }
 
-    // 3) перевірка username
     if (username) {
       const existingByUsername = await this.prisma.user.findUnique({
         where: { username },
       });
-
       if (existingByUsername) {
         throw new BadRequestException('Username is already taken');
       }
     }
 
-    // 4) мапимо роль
+    const passwordHash = await bcrypt.hash(password, BCRYPT_ROUNDS);
     const dbRole = this.mapRole(role);
-    const fakeClerkId = `local_${randomUUID()}`;
 
-    // 5) створюємо юзера
     const user = await this.prisma.user.create({
       data: {
         email,
         username,
         name: fullName ?? null,
         role: dbRole,
-        clerkId: fakeClerkId,
+        passwordHash,
       },
     });
 
-    console.log('USER CREATED:', user);
-
     return {
       message: 'User created',
-      user,
+      user: {
+        id: user.id,
+        email: user.email,
+        role: user.role,
+      },
     };
   }
 
   async login(data: LoginInput) {
-    console.log('LOGIN data:', data);
-
     const { email } = data;
+    const password = typeof data.password === 'string' ? data.password : '';
 
     if (!email) {
       throw new BadRequestException('Email is required');
     }
-
-    const user = await this.prisma.user.findUnique({
-      where: { email },
-    });
-
-    if (!user) {
-      // пізніше можна буде замінити на 401, коли додаси нормальний пароль
-      throw new BadRequestException('Invalid email or password');
+    if (!password) {
+      throw new BadRequestException('Password is required');
     }
 
-    // TODO: перевірка пароля, коли заведеш passwordHash
+    const user = await this.prisma.user.findUnique({ where: { email } });
 
-    const fakeToken = `local_${user.id}_${randomUUID()}`;
+    // Deliberate vague message — do not reveal whether the email exists.
+    const INVALID = 'Invalid email or password';
+
+    if (!user) {
+      throw new BadRequestException(INVALID);
+    }
+
+    if (!user.passwordHash) {
+      // Account was created before password auth was introduced.
+      // Reject with the same generic message — do not hint at missing hash.
+      throw new BadRequestException(INVALID);
+    }
+
+    const passwordValid = await bcrypt.compare(password, user.passwordHash);
+    if (!passwordValid) {
+      throw new BadRequestException(INVALID);
+    }
+
+    const token = `local_${user.id}_${randomUUID()}`;
+    const expiresAt = new Date(Date.now() + SESSION_TTL_MS);
+
+    await this.prisma.loginSession.create({
+      data: { token, userId: user.id, expiresAt },
+    });
+
+    // Opportunistically clean up expired sessions for this user (fire-and-forget).
+    this.prisma.loginSession
+      .deleteMany({ where: { userId: user.id, expiresAt: { lt: new Date() } } })
+      .catch(() => undefined);
 
     return {
-      access_token: fakeToken,
+      access_token: token,
       user: {
         id: user.id,
         email: user.email,
-        role: user.role, // 'STUDENT' | 'TEACHER'
+        role: user.role,
       },
     };
   }

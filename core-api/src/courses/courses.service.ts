@@ -1,3 +1,4 @@
+//courses.service.ts
 import {
   BadRequestException,
   ForbiddenException,
@@ -151,5 +152,103 @@ export class CoursesService {
     });
 
     return { success: true };
+  }
+
+  async getCoursesForStudent(studentId: string) {
+    const student = await this.prisma.user.findUnique({
+      where: { id: studentId },
+    });
+
+    if (!student) {
+      throw new NotFoundException('Student not found');
+    }
+    if (student.role !== 'STUDENT') {
+      throw new ForbiddenException('User is not a student');
+    }
+
+    const enrollments = await this.prisma.courseEnrollment.findMany({
+      where: { studentId },
+      orderBy: { createdAt: 'desc' },
+      include: {
+        course: {
+          include: {
+            teacher: {
+              select: {
+                id: true,
+                email: true,
+                name: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    return enrollments.map((enrollment) => ({
+      id: enrollment.course.id,
+      name: enrollment.course.name,
+      code: enrollment.course.code,
+      description: enrollment.course.description,
+      createdAt: enrollment.course.createdAt,
+      teacher: enrollment.course.teacher
+        ? {
+            id: enrollment.course.teacher.id,
+            email: enrollment.course.teacher.email,
+            name: enrollment.course.teacher.name,
+          }
+        : null,
+    }));
+  }
+
+  async getCourseDetailForStudent(studentId: string, courseId: string) {
+    const student = await this.prisma.user.findUnique({
+      where: { id: studentId },
+    });
+
+    if (!student) {
+      throw new NotFoundException('Student not found');
+    }
+    if (student.role !== 'STUDENT') {
+      throw new ForbiddenException('User is not a student');
+    }
+
+    const enrollment = await this.prisma.courseEnrollment.findFirst({
+      where: {
+        studentId,
+        courseId,
+      },
+      include: {
+        course: {
+          include: {
+            teacher: {
+              select: {
+                id: true,
+                email: true,
+                name: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    if (!enrollment) {
+      throw new NotFoundException('Course not found for this student');
+    }
+
+    return {
+      id: enrollment.course.id,
+      name: enrollment.course.name,
+      code: enrollment.course.code,
+      description: enrollment.course.description,
+      createdAt: enrollment.course.createdAt,
+      teacher: enrollment.course.teacher
+        ? {
+            id: enrollment.course.teacher.id,
+            email: enrollment.course.teacher.email,
+            name: enrollment.course.teacher.name,
+          }
+        : null,
+    };
   }
 }

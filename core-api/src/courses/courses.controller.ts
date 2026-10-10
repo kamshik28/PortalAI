@@ -1,4 +1,5 @@
 // src/courses/courses.controller.ts
+
 import {
   BadRequestException,
   Body,
@@ -10,16 +11,14 @@ import {
   Req,
 } from '@nestjs/common';
 import { CoursesService } from './courses.service';
-import type { Request as ExpressRequest } from 'express';
+import type { AuthenticatedRequest } from '../common/auth/auth.guard';
 
-// DTO для тіла запиту створення курсу
 interface CreateCourseDto {
   name: string;
   code?: string | null;
   description?: string | null;
 }
 
-// DTO для додавання студента
 interface AddStudentDto {
   studentEmail: string;
 }
@@ -28,75 +27,37 @@ interface AddStudentDto {
 export class CoursesController {
   constructor(private readonly coursesService: CoursesService) {}
 
-  private extractUserId(req: ExpressRequest): string {
-    const authHeader = req.headers['authorization'];
-
-    if (typeof authHeader === 'undefined') {
-      throw new BadRequestException('Missing Authorization header');
-    }
-
-    const raw = Array.isArray(authHeader) ? authHeader[0] : authHeader;
-
-    if (typeof raw !== 'string' || raw.length === 0) {
-      throw new BadRequestException('Invalid Authorization header');
-    }
-
-    const parts = raw.split(' ');
-    const token = parts.length === 2 ? parts[1] : parts[0];
-
-    if (!token || !token.startsWith('local_')) {
-      throw new BadRequestException('Invalid token');
-    }
-
-    const withoutPrefix = token.slice('local_'.length);
-    const idx = withoutPrefix.indexOf('_');
-    const userId = idx === -1 ? withoutPrefix : withoutPrefix.slice(0, idx);
-
-    if (!userId) {
-      throw new BadRequestException('Cannot extract user id');
-    }
-
-    return userId;
-  }
-
   @Get()
-  async getMyCourses(@Req() req: ExpressRequest) {
-    const teacherId = this.extractUserId(req);
-    const courses = await this.coursesService.getCoursesForTeacher(teacherId);
+  async getMyCourses(@Req() req: AuthenticatedRequest) {
+    const courses = await this.coursesService.getCoursesForTeacher(req.userId);
     return { courses };
   }
 
   @Post()
   async createCourse(
-    @Req() req: ExpressRequest,
+    @Req() req: AuthenticatedRequest,
     @Body() body: CreateCourseDto,
   ) {
-    const teacherId = this.extractUserId(req);
-
-    if (!body.name) {
+    if (!body.name?.trim()) {
       throw new BadRequestException('Name is required');
     }
 
-    const course = await this.coursesService.createCourseForTeacher(
-      teacherId,
-      {
-        name: body.name,
-        code: body.code ?? null,
-        description: body.description ?? null,
-      },
-    );
+    const course = await this.coursesService.createCourseForTeacher(req.userId, {
+      name: body.name.trim(),
+      code: body.code?.trim() || null,
+      description: body.description?.trim() || null,
+    });
 
     return { course };
   }
 
   @Get(':courseId/students')
   async getStudents(
-    @Req() req: ExpressRequest,
+    @Req() req: AuthenticatedRequest,
     @Param('courseId') courseId: string,
   ) {
-    const teacherId = this.extractUserId(req);
     const students = await this.coursesService.getStudentsForCourse(
-      teacherId,
+      req.userId,
       courseId,
     );
     return { students };
@@ -104,20 +65,18 @@ export class CoursesController {
 
   @Post(':courseId/students')
   async addStudent(
-    @Req() req: ExpressRequest,
+    @Req() req: AuthenticatedRequest,
     @Param('courseId') courseId: string,
     @Body() body: AddStudentDto,
   ) {
-    const teacherId = this.extractUserId(req);
-
-    if (!body.studentEmail) {
+    if (!body.studentEmail?.trim()) {
       throw new BadRequestException('studentEmail is required');
     }
 
     const student = await this.coursesService.addStudentToCourse(
-      teacherId,
+      req.userId,
       courseId,
-      body.studentEmail,
+      body.studentEmail.trim(),
     );
 
     return { student };
@@ -125,13 +84,12 @@ export class CoursesController {
 
   @Delete(':courseId/students/:studentId')
   async removeStudent(
-    @Req() req: ExpressRequest,
+    @Req() req: AuthenticatedRequest,
     @Param('courseId') courseId: string,
     @Param('studentId') studentId: string,
   ) {
-    const teacherId = this.extractUserId(req);
     await this.coursesService.removeStudentFromCourse(
-      teacherId,
+      req.userId,
       courseId,
       studentId,
     );

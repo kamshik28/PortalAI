@@ -1,20 +1,42 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
 enum Role {
   STUDENT
   TEACHER
 }
 
 model User {
-  id        String   @id @default(cuid())
-  email     String   @unique
-  username  String?  @unique
-  aisId     String?  @unique
-  name      String?
-  role      Role     @default(STUDENT)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id           String   @id @default(cuid())
+  email        String   @unique
+  username     String?  @unique
+  aisId        String?  @unique
+  name         String?
+  passwordHash String?
+  role         Role     @default(STUDENT)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 
   teacherCourses     Course[]           @relation("TeacherCourses")
   studentEnrollments CourseEnrollment[] @relation("StudentCourses")
+
+  aisSession    AisSession?
+  aisSubjects   AisSubject[]
+  aisDocuments  AisDocument[]
+  loginSessions LoginSession[]
+
+  // Learning progress relations — regular courses
+  courseProgresses StudentCourseProgress[] @relation("StudentProgress")
+  quizAttempts     QuizAttempt[]           @relation("StudentQuizAttempts")
+
+  // Learning progress relations — AIS subjects
+  aisSubjectProgresses AisSubjectProgress[] @relation("UserAisProgress")
+  aisQuizAttempts      AisQuizAttempt[]     @relation("UserAisQuizAttempts")
 }
 
 model Course {
@@ -25,6 +47,10 @@ model Course {
   teacher     User               @relation("TeacherCourses", fields: [teacherId], references: [id])
   teacherId   String
   enrollments CourseEnrollment[]
+
+  // Learning progress back-relations
+  studentProgresses StudentCourseProgress[]
+  quizAttempts      QuizAttempt[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -40,4 +66,217 @@ model CourseEnrollment {
   createdAt DateTime @default(now())
 
   @@unique([courseId, studentId])
+}
+
+model LoginSession {
+  id        String   @id @default(cuid())
+  token     String   @unique
+  userId    String
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model AisSession {
+  id                  String    @id @default(cuid())
+  userId              String    @unique
+  uisAuthCookie       String
+  isActive            Boolean   @default(true)
+  lastSyncAt          DateTime?
+  activeAisSubjectId  String?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model AisSubject {
+  id               String    @id @default(cuid())
+  userId           String
+  aisSubjectId     String
+  code             String
+  name             String?
+  sourceUrl        String?
+  chatCourseId     String?   @unique
+  semesterFolderId String?
+  semesterLabel    String?
+  lastSyncAt       DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  user      User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  documents AisDocument[]
+
+  // AIS progress back-relations
+  progress  AisSubjectProgress[]
+  attempts  AisQuizAttempt[]
+
+  @@unique([userId, aisSubjectId])
+  @@index([userId])
+  @@index([userId, semesterFolderId])
+}
+
+model AisDocument {
+  id            String    @id @default(cuid())
+  userId        String
+  subjectId     String
+  externalDocId String?
+  filename      String
+  sourceUrl     String
+  storagePath   String?
+  mimeType      String?
+  textExtracted Boolean   @default(false)
+  contentHash   String?
+  indexedAt     DateTime?
+  qdrantVersion Int?
+  syncStatus    String?
+  lastSeenAt    DateTime  @default(now())
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  subject AisSubject @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+  user    User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, sourceUrl])
+  @@index([userId, subjectId])
+}
+
+// ── Learning Progress ────────────────────────────────────────────────────────
+
+/// Aggregated learning progress per student per course.
+/// Recalculated after every quiz attempt.
+model StudentCourseProgress {
+  id             String    @id @default(cuid())
+  studentId      String
+  courseId       String
+  estimatedLevel String    @default("beginner") // "beginner" | "intermediate" | "advanced"
+  scoreAvg       Float     @default(0)           // weighted average score (0.0–1.0)
+  totalQuizzes   Int       @default(0)
+  totalQuestions Int       @default(0)
+  correctAnswers Float     @default(0)           // Float to support half-points from open Qs
+  weakTopics     Json      @default("[]")        // string[]
+  strongTopics   Json      @default("[]")        // string[]
+  lastActivityAt DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  student User   @relation("StudentProgress", fields: [studentId], references: [id], onDelete: Cascade)
+  course  Course @relation(fields: [courseId], references: [id], onDelete: Cascade)
+
+  @@unique([studentId, courseId])
+  @@index([studentId])
+  @@index([courseId])
+}
+
+/// A single quiz session completed by a student for a specific course.
+model QuizAttempt {
+  id             String    @id @default(cuid())
+  studentId      String
+  courseId       String
+  quizType       String    @default("mixed") // "mcq" | "open" | "mixed"
+  topic          String?
+  totalQuestions Int
+  correctAnswers Float     @default(0)       // Float for half-point support
+  score          Float     @default(0)       // 0.0–1.0 ratio
+  startedAt      DateTime  @default(now())
+  finishedAt     DateTime?
+
+  student User         @relation("StudentQuizAttempts", fields: [studentId], references: [id], onDelete: Cascade)
+  course  Course       @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  answers QuizAnswer[]
+
+  @@index([studentId, courseId])
+}
+
+/// One question-answer pair within a quiz attempt.
+model QuizAnswer {
+  id              String   @id @default(cuid())
+  attemptId       String
+  questionText    String   @db.Text
+  questionType    String   @default("mcq")  // "mcq" | "open"
+  userAnswer      String?  @db.Text
+  correctAnswer   String?  @db.Text
+  isCorrect       Boolean?
+  aiEvalStatus    String?  // "correct" | "partially_correct" | "incorrect"
+  aiScore         Float?   // 0 | 0.5 | 1
+  aiFeedback      String?  @db.Text
+  matchedConcepts Json?    @default("[]")   // string[]
+  missingConcepts Json?    @default("[]")   // string[]
+  topic           String?  // source filename used as topic key
+  createdAt       DateTime @default(now())
+
+  attempt QuizAttempt @relation(fields: [attemptId], references: [id], onDelete: Cascade)
+
+  @@index([attemptId])
+}
+
+// ── AIS Subject Learning Progress ────────────────────────────────────────────
+
+/// Aggregated learning progress per student per AIS subject.
+/// Recalculated after every AIS quiz attempt.
+model AisSubjectProgress {
+  id             String    @id @default(cuid())
+  userId         String
+  aisSubjectId   String                        // AisSubject.id (Prisma internal)
+  estimatedLevel String    @default("beginner") // "beginner" | "intermediate" | "advanced"
+  scoreAvg       Float     @default(0)          // weighted average score 0.0–1.0
+  totalQuizzes   Int       @default(0)
+  totalQuestions Int       @default(0)
+  correctAnswers Float     @default(0)          // Float for half-points from open Qs
+  weakTopics     Json      @default("[]")       // string[] — source filenames below 50% accuracy
+  strongTopics   Json      @default("[]")       // string[] — source filenames above 80% accuracy
+  lastActivityAt DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  user       User       @relation("UserAisProgress", fields: [userId], references: [id], onDelete: Cascade)
+  aisSubject AisSubject @relation(fields: [aisSubjectId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, aisSubjectId])
+  @@index([userId])
+}
+
+/// A single AIS quiz session completed by a student for a specific AIS subject.
+model AisQuizAttempt {
+  id             String    @id @default(cuid())
+  userId         String
+  aisSubjectId   String
+  quizType       String    @default("mixed") // "mcq" | "open" | "mixed"
+  topic          String?
+  totalQuestions Int
+  correctAnswers Float     @default(0)
+  score          Float     @default(0)       // 0.0–1.0 ratio
+  startedAt      DateTime  @default(now())
+  finishedAt     DateTime?
+
+  user       User            @relation("UserAisQuizAttempts", fields: [userId], references: [id], onDelete: Cascade)
+  aisSubject AisSubject      @relation(fields: [aisSubjectId], references: [id], onDelete: Cascade)
+  answers    AisQuizAnswer[]
+
+  @@index([userId, aisSubjectId])
+}
+
+/// One question-answer pair within an AIS quiz attempt.
+model AisQuizAnswer {
+  id              String   @id @default(cuid())
+  attemptId       String
+  questionText    String   @db.Text
+  questionType    String   @default("mcq")  // "mcq" | "open"
+  userAnswer      String?  @db.Text
+  correctAnswer   String?  @db.Text
+  isCorrect       Boolean?
+  aiEvalStatus    String?  // "correct" | "partially_correct" | "incorrect"
+  aiScore         Float?   // 0 | 0.5 | 1
+  aiFeedback      String?  @db.Text
+  matchedConcepts Json?    @default("[]")   // string[]
+  missingConcepts Json?    @default("[]")   // string[]
+  topic           String?  // source filename used as topic key
+  createdAt       DateTime @default(now())
+
+  attempt AisQuizAttempt @relation(fields: [attemptId], references: [id], onDelete: Cascade)
+
+  @@index([attemptId])
 }
