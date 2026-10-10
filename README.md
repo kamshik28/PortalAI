@@ -6,6 +6,8 @@ A full-stack web portal for university students and teachers with a built-in **A
 
 Built as a **bachelor's thesis project** (*Student Portal with an AI Assistant*, FEI STU Bratislava). It is a working prototype intended for local development, not a production deployment.
 
+📄 **Full thesis (PDF, Slovak, English abstract):** [docs/BP_Kaminskyi.pdf](docs/BP_Kaminskyi.pdf)
+
 ---
 
 ## Features
@@ -103,6 +105,18 @@ npm run dev                   # http://localhost:3000
 3. Set `FLOWISE_INTERNAL_URL`, `FLOWISE_BASE`, `FLOWISE_CHATFLOW_ID` in `portal-ai/.env`.
 
 See [flowise/README.md](flowise/README.md) for the description of the agents.
+
+---
+
+## Documentation
+
+The full bachelor's thesis is available in [`docs/BP_Kaminskyi.pdf`](docs/BP_Kaminskyi.pdf) (Slovak, with an English abstract). It covers:
+- analysis of the previous solution and proposed changes,
+- system architecture and data model,
+- RAG pipeline, AIS integration, quiz generation,
+- testing (20 manual scenarios) and performance measurements.
+
+The thesis builds on the earlier bachelor's thesis by M. Petkes (FEI STU, 2025); in this work the system was redesigned and rewritten into a unified TypeScript stack (Next.js + NestJS).
 
 ---
 

@@ -11,6 +11,9 @@ používateľom sprístupňuje len funkcionalitu zodpovedajúcu ich roli.
 > (najmä integrácia s AIS STU) sú vedome zjednodušené — viď [Obmedzenia
 > prototypu](#obmedzenia-prototypu).
 
+
+📄 **Plný text bakalárskej práce:** [docs/BP_Kaminskyi.pdf](docs/BP_Kaminskyi.pdf)
+
 ---
 
 ## Štruktúra projektu
